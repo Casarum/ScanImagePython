@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import shutil
 import subprocess
+from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton,
     QVBoxLayout, QWidget, QFileDialog, QTextEdit, QMessageBox
@@ -139,31 +140,35 @@ class PassportScannerApp(QMainWindow):
         if len(mrz_date) != 6 or not mrz_date.isdigit():
             return "Invalid date"
         
-        # For expiration dates (assume 21st century if year < 30)
+        # For expiration dates (always use 21st century)
         if self.is_expiration_date:
-            year = "20" + mrz_date[:2] if int(mrz_date[:2]) < 30 else "19" + mrz_date[:2]
-        # For birth dates (assume 20th century if year > 30)
+            year = "20" + mrz_date[:2]
+        # For birth dates (use 20th century if year > current year, else 21st)
         else:
-            year = "19" + mrz_date[:2] if int(mrz_date[:2]) > 30 else "20" + mrz_date[:2]
+            current_year_short = int(str(datetime.now().year)[2:])
+            year = "19" + mrz_date[:2] if int(mrz_date[:2]) > current_year_short else "20" + mrz_date[:2]
         
         return f"{mrz_date[4:6]}/{mrz_date[2:4]}/{year}"
 
     def parse_mrz_name(self, mrz_name):
-        """Convert MRZ name format (SURNAME<GIVENNAMES) to normal format."""
+        """Convert MRZ name format (SURNAME<<GIVENNAMES) to separate surname and given names."""
         if not mrz_name or not isinstance(mrz_name, str):
-            return "Unknown"
+            return "Unknown", "Unknown"
         
         try:
-            if '<' in mrz_name:
-                parts = [part.strip() for part in mrz_name.split('<') if part.strip()]
-                if len(parts) >= 2:
-                    # Return "GIVENNAME SURNAME" format
-                    return f"{parts[1]} {parts[0]}"
-                return parts[0] if parts else "Unknown"
-            return mrz_name
+            # First split on double << to separate surname from given names
+            parts = mrz_name.split('<<', 1)
+            
+            # Surname is the part before the first << (remove any remaining <)
+            surname = parts[0].replace('<', ' ').strip() if parts else "Unknown"
+            
+            # Given names are after the first << (remove any remaining <)
+            given_names = parts[1].replace('<', ' ').strip() if len(parts) > 1 else ""
+            
+            return surname, given_names
         except Exception as e:
             print(f"Error parsing name: {e}")
-            return mrz_name
+            return "Unknown", "Unknown"
 
     def highlight_mrz_area(self, img, mrz):
         """Highlight MRZ area with compatibility for different PassportEye versions."""
@@ -222,20 +227,24 @@ class PassportScannerApp(QMainWindow):
             mrz_data = mrz.to_dict()
             result_text = "🛂 Passport MRZ Data:\n\n"
             
+            # Parse names separately
+            surname, given_names = self.parse_mrz_name(mrz_data.get('names', ''))
+            
             # Format important fields correctly
             self.is_expiration_date = True
             expiration_date = self.parse_mrz_date(mrz_data.get('expiration_date', '000000'))
             self.is_expiration_date = False
             
             fields = [
-                ('Document Type', mrz_data.get('type', 'Unknown')),
+                ('Document Type', mrz_data.get('type', 'Unknown').replace('<', '')),
                 ('Issuing Country', mrz_data.get('country', 'Unknown')),
                 ('Passport Number', mrz_data.get('number', 'Unknown')),
+                ('Surname', surname),
+                ('Given Names', given_names),
                 ('Date of Birth', self.parse_mrz_date(mrz_data.get('date_of_birth', '000000'))),
                 ('Expiration Date', expiration_date),
                 ('Nationality', mrz_data.get('nationality', 'Unknown')),
-                ('Gender', 'Male' if mrz_data.get('sex') == 'M' else 'Female'),
-                ('Full Name', self.parse_mrz_name(mrz_data.get('names', 'Unknown')))
+                ('Gender', 'Male' if mrz_data.get('sex') == 'M' else 'Female')
             ]
             
             for field, value in fields:
