@@ -151,24 +151,30 @@ class PassportScannerApp(QMainWindow):
         return f"{mrz_date[4:6]}/{mrz_date[2:4]}/{year}"
 
     def parse_mrz_name(self, mrz_name):
-        """Convert MRZ name format (SURNAME<<GIVENNAMES) to separate surname and given names."""
+        """Convert MRZ name format (SURNAME<<GIVENNAMES) to separate name and surname."""
         if not mrz_name or not isinstance(mrz_name, str):
-            return "Unknown", "Unknown"
+            return "", ""
         
         try:
-            # First split on double << to separate surname from given names
-            parts = mrz_name.split('<<', 1)
+            # Split into parts separated by '<<'
+            parts = [part.replace('<', ' ').strip() for part in mrz_name.split('<<') if part.strip()]
             
-            # Surname is the part before the first << (remove any remaining <)
-            surname = parts[0].replace('<', ' ').strip() if parts else "Unknown"
+            # First part is name (after country code)
+            name = parts[0] if len(parts) > 0 else ""
             
-            # Given names are after the first << (remove any remaining <)
-            given_names = parts[1].replace('<', ' ').strip() if len(parts) > 1 else ""
+            # Second part is surname
+            surname = parts[1] if len(parts) > 1 else ""
             
-            return surname, given_names
+            return name, surname
         except Exception as e:
             print(f"Error parsing name: {e}")
-            return "Unknown", "Unknown"
+            return "", ""
+
+    def extract_name_from_doc_type(self, doc_type_raw):
+        """Extract name from document type field after country code."""
+        if len(doc_type_raw) > 3 and doc_type_raw[:3].isalpha():
+            return doc_type_raw[3:].replace('<', ' ').strip()
+        return ""
 
     def highlight_mrz_area(self, img, mrz):
         """Highlight MRZ area with compatibility for different PassportEye versions."""
@@ -227,8 +233,18 @@ class PassportScannerApp(QMainWindow):
             mrz_data = mrz.to_dict()
             result_text = "🛂 Passport MRZ Data:\n\n"
             
-            # Parse names separately
-            surname, given_names = self.parse_mrz_name(mrz_data.get('names', ''))
+            # Extract document type and country code
+            doc_type_raw = mrz_data.get('type', '')
+            country = mrz_data.get('country', 'Unknown')
+            
+            # Extract name from document type field (after country code)
+            name_from_doc_type = self.extract_name_from_doc_type(doc_type_raw)
+            
+            # Parse names from names field
+            name_from_names, surname = self.parse_mrz_name(mrz_data.get('names', ''))
+            
+            # Combine name parts
+            name = f"{name_from_doc_type} {name_from_names}".strip()
             
             # Format important fields correctly
             self.is_expiration_date = True
@@ -236,11 +252,11 @@ class PassportScannerApp(QMainWindow):
             self.is_expiration_date = False
             
             fields = [
-                ('Document Type', mrz_data.get('type', 'Unknown').replace('<', '')),
-                ('Issuing Country', mrz_data.get('country', 'Unknown')),
+                ('Document Type', 'P'),
+                ('Issuing Country', country),
                 ('Passport Number', mrz_data.get('number', 'Unknown')),
+                ('Name', name),
                 ('Surname', surname),
-                ('Given Names', given_names),
                 ('Date of Birth', self.parse_mrz_date(mrz_data.get('date_of_birth', '000000'))),
                 ('Expiration Date', expiration_date),
                 ('Nationality', mrz_data.get('nationality', 'Unknown')),
